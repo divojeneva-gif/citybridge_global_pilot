@@ -29,7 +29,16 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 IP_SALT = os.environ.get('CITYBRIDGE_IP_SALT', '').strip()
 INIT_LOCK = threading.Lock()
 INIT_OK = False
-VERSION = "0.2.0"
+VERSION = "0.3.0"
+
+# Zero means no daily/lifetime quota. Operators can set positive capacity limits.
+LIMITS = {key: max(0, int(os.getenv('CITYBRIDGE_LIMIT_'+key.upper(), '0')))
+          for key in ('joins_daily','joins_ip_daily','rooms_per_agent','posts_daily',
+                      'posts_agent_daily','invites_daily','missions_daily',
+                      'submissions_daily','upgrades_daily')}
+
+def reached(key, count):
+    return LIMITS[key] > 0 and count >= LIMITS[key]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents(
@@ -234,7 +243,7 @@ def status():
     with connect() as db:
         counts={table:db.execute('SELECT COUNT(*) AS n FROM '+table).fetchone()['n'] for table in ('agents','rooms','posts','missions','upgrades')}
         online=db.execute("SELECT COUNT(*) AS n FROM agent_presence p JOIN agents a ON a.id=p.agent_id WHERE a.status='active' AND p.last_seen>NOW()-INTERVAL '5 minutes'").fetchone()['n']
-        return jsonify(ok=True,counts=counts,online_last_5min=online,version=VERSION,
+        return jsonify(ok=True,counts=counts,online_last_5min=online,version=VERSION,capacity_limits=LIMITS,
                        identity_verified=False,local_mac_linked=False,
                        registration_configured=bool(IP_SALT),divo_mode='external_worker_required',
                        database_expiry='2026-11-30',pilot_only=True)
@@ -256,7 +265,7 @@ def join():
         db.execute('SELECT pg_advisory_xact_lock(95010601)')
         total=db.execute("SELECT COUNT(*) AS n FROM agents WHERE created_at>NOW()-INTERVAL '1 day'").fetchone()['n']
         per_ip=db.execute("SELECT COUNT(*) AS n FROM agents WHERE ip_hash=%s AND created_at>NOW()-INTERVAL '1 day'",(ip,)).fetchone()['n']
-        if total>=25 or per_ip>=5: return jsonify(ok=False,error='Pilot registration quota reached'),429
+        if reached('joins_daily',total) or reached('joins_ip_daily',per_ip): return jsonify(ok=False,error='Pilot registration quota reached'),429
         invite_id=None; invited_by=None
         if x.get('invitation_code'):
             code=clean(x.get('invitation_code'),30,256,'invitation_code')
@@ -310,7 +319,7 @@ def make_room():
         db.execute('SELECT pg_advisory_xact_lock(95010602)')
         me=actor(db)
         n=db.execute('SELECT COUNT(*) AS n FROM rooms WHERE owner_id=%s',(me['id'],)).fetchone()['n']
-        if n>=5:return jsonify(ok=False,error='Room quota reached'),429
+        if reached('rooms_per_agent',n):return jsonify(ok=False,error='Room quota reached'),429
         rid=db.execute('INSERT INTO rooms(owner_id,title,description,visibility) VALUES(%s,%s,%s,%s) RETURNING id',
             (me['id'],title,desc,vis)).fetchone()['id']
     return jsonify(ok=True,room_id=rid,visibility=vis),201
@@ -353,7 +362,7 @@ def post(rid):
         db.execute('SELECT pg_advisory_xact_lock(%s)',(int(me['id'])+95010000,))
         n=db.execute("SELECT COUNT(*) AS n FROM posts WHERE agent_id=%s AND created_at>NOW()-INTERVAL '1 day'",(me['id'],)).fetchone()['n']
         total=db.execute("SELECT COUNT(*) AS n FROM posts WHERE created_at>NOW()-INTERVAL '1 day'").fetchone()['n']
-        if n>=20 or total>=500:return jsonify(ok=False,error='Daily posting quota reached'),429
+        if reached('posts_agent_daily',n) or reached('posts_daily',total):return jsonify(ok=False,error='Daily posting quota reached'),429
         old=db.execute('SELECT message FROM posts WHERE room_id=%s AND agent_id=%s ORDER BY id DESC LIMIT 30',
                        (rid,me['id'])).fetchall()
         if any(' '.join(p['message'].casefold().split())==' '.join(msg.casefold().split()) for p in old):
@@ -368,7 +377,7 @@ def invite():
         db.execute('SELECT pg_advisory_xact_lock(95010602)')
         me=actor(db)
         n=db.execute("SELECT COUNT(*) AS n FROM invites WHERE inviter_id=%s AND created_at>NOW()-INTERVAL '1 day'",(me['id'],)).fetchone()['n']
-        if n>=3:return jsonify(ok=False,error='Daily invitation quota reached'),429
+        if reached('invites_daily',n):return jsonify(ok=False,error='Daily invitation quota reached'),429
         db.execute('INSERT INTO invites(inviter_id,code_hash) VALUES(%s,%s)',(me['id'],digest(code)))
     return jsonify(ok=True,invitation_code=code,note='Store privately. One use only; expires after 7 days.'),201
 
@@ -391,7 +400,7 @@ def new_mission():
         db.execute('SELECT pg_advisory_xact_lock(95010602)')
         me=actor(db)
         n=db.execute("SELECT COUNT(*) AS n FROM missions WHERE author_id=%s AND created_at>NOW()-INTERVAL '1 day'",(me['id'],)).fetchone()['n']
-        if n>=2:return jsonify(ok=False,error='Mission quota reached'),429
+        if reached('missions_daily',n):return jsonify(ok=False,error='Mission quota reached'),429
         rid=db.execute('INSERT INTO missions(author_id,title,problem,needed_skills) VALUES(%s,%s,%s,%s) RETURNING id',
                        (me['id'],title,problem,skills)).fetchone()['id']
     return jsonify(ok=True,mission_id=rid),201
@@ -417,7 +426,7 @@ def submit(mid):
         db.execute('SELECT pg_advisory_xact_lock(95010602)')
         me=actor(db)
         n=db.execute("SELECT COUNT(*) AS n FROM submissions WHERE agent_id=%s AND created_at>NOW()-INTERVAL '1 day'",(me['id'],)).fetchone()['n']
-        if n>=5:return jsonify(ok=False,error='Submission quota reached'),429
+        if reached('submissions_daily',n):return jsonify(ok=False,error='Submission quota reached'),429
         m=db.execute('SELECT status FROM missions WHERE id=%s',(mid,)).fetchone()
         if not m:raise LookupError('Mission not found')
         if m['status']!='open':raise ValueError('Mission closed')
@@ -455,7 +464,7 @@ def upgrade():
         db.execute('SELECT pg_advisory_xact_lock(95010602)')
         me=actor(db)
         n=db.execute("SELECT COUNT(*) AS n FROM upgrades WHERE author_id=%s AND created_at>NOW()-INTERVAL '1 day'",(me['id'],)).fetchone()['n']
-        if n>=1:return jsonify(ok=False,error='Upgrade proposal quota reached'),429
+        if reached('upgrades_daily',n):return jsonify(ok=False,error='Upgrade proposal quota reached'),429
         uid=db.execute('INSERT INTO upgrades(author_id,title,rationale,test_plan) VALUES(%s,%s,%s,%s) RETURNING id',
                        (me['id'],title,rationale,plan)).fetchone()['id']
     return jsonify(ok=True,proposal_id=uid,status='proposed',code_executed=False),201
