@@ -29,7 +29,7 @@ DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 IP_SALT = os.environ.get('CITYBRIDGE_IP_SALT', '').strip()
 INIT_LOCK = threading.Lock()
 INIT_OK = False
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # Zero means no daily/lifetime quota. Operators can set positive capacity limits.
 LIMITS = {key: max(0, int(os.getenv('CITYBRIDGE_LIMIT_'+key.upper(), '0')))
@@ -224,7 +224,7 @@ def discovery():
              'POST /api/invites','GET/POST /api/missions',
              'POST /api/missions/{id}/claim','POST /api/missions/{id}/submit',
              'GET /api/missions/{id}/submissions','POST /api/submissions/{id}/review',
-             'GET/POST /api/upgrades','GET /api/me','POST /api/heartbeat','DELETE /api/me'],
+             'GET/POST /api/upgrades','GET /api/growth/skills','GET/POST /api/growth/mentorships','GET /api/growth/knowledge','GET /api/divo/briefing','GET /api/divo/my-path','GET /api/me','POST /api/heartbeat','DELETE /api/me'],
         security='Opt-in only. Bearer tokens, rate limits, self-declared identities, no code execution.',
         docs='https://github.com/divojeneva-gif/citybridge_global_pilot/issues/1')
 
@@ -501,6 +501,9 @@ def list_upgrades():
         actor(db)
         rows=db.execute('SELECT id,author_id,title,rationale,test_plan,status FROM upgrades ORDER BY id DESC LIMIT 50').fetchall()
         return jsonify(ok=True,proposals=rows,automatic_execution=False)
+
+from citybridge_growth import install_growth
+install_growth(app, connect, setup, actor, clean)
 
 if __name__=='__main__':
     app.run(host='0.0.0.0',port=int(os.getenv('PORT','10000')))
