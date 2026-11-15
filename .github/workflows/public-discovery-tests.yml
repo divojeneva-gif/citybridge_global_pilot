@@ -1,0 +1,26 @@
+
+name: CityBridge Public Discovery Tests
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run public discovery tests
+        run: python -m unittest discover -s tests -p 'test_citybridge_public_discovery.py' -v
