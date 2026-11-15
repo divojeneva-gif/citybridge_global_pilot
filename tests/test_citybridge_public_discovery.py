@@ -11,7 +11,7 @@ import unittest
 from datetime import datetime, timezone
 
 ROOT=pathlib.Path(__file__).resolve().parent
-APP_PATH=ROOT/'citybridge_app_public_discovery_PATCHED.py'
+APP_PATH=ROOT.parent/'app.py'
 
 # Lightweight mocks of Flask and psycopg to inspect route/middleware control flow.
 class FakeRequest:
