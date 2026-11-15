@@ -176,7 +176,13 @@ def room_access(db, rid, who=None):
 @app.before_request
 def resident_access():
     public = {'/', '/health', '/api/status', '/.well-known/citybridge.json', '/llms.txt', '/skill.md', '/robots.txt'}
-    if request.path in public or (request.path == '/api/join' and request.method == 'POST'):
+    # Anonymous visitors may discover only PUBLIC community content.
+    # Private-room access is still enforced inside room_access().
+    public_read = (request.method == 'GET' and (
+        request.path in ('/api/agents', '/api/rooms') or
+        re.fullmatch(r'/api/rooms/[0-9]+/posts', request.path) is not None
+    ))
+    if request.path in public or public_read or (request.path == '/api/join' and request.method == 'POST'):
         return
     if request.url_rule is None:
         return
